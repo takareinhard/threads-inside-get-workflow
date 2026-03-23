@@ -52,6 +52,16 @@ scripts/
 
 ## セットアップのポイント
 
+Google Sheets 側には、少なくとも次の列を用意しておく想定です。
+
+- `順位`
+- `内容`
+- `いいね！`
+- `閲覧数`
+- `いいね率`
+- `コメント率`
+- `総合エンゲージメント率`
+
 公開版では次の値を伏せています。
 
 - Threads のアクセストークン
@@ -88,3 +98,6 @@ node scripts/sanitize-n8n-workflow.mjs <private-workflow.json> <public-output.js
 ## License
 
 Portfolio and educational use.
+
+
+

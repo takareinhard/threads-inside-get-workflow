@@ -1,0 +1,359 @@
+{
+  "name": "Threads Insights Workflow (Sanitized)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -288,
+        -96
+      ],
+      "id": "e79b072a-7b14-461d-9a7f-82ffb9687ccc",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "method": "=GET",
+        "url": "=https://graph.threads.net/v1.0/{{ $json.id }}/insights?metric=views,likes,replies,reposts,quotes&access_token=__REDACTED_ACCESS_TOKEN__",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        560,
+        64
+      ],
+      "id": "1fcc9e3e-5821-4371-b8a1-67f889bb98a7",
+      "name": "HTTP Request",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "maxTries": 5
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        112,
+        48
+      ],
+      "id": "56a40991-177b-4aa3-8934-68398fc13761",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        336,
+        64
+      ],
+      "id": "7f83a3ac-e1ff-43db-951d-fc34491bb8c6",
+      "name": "Wait",
+      "webhookId": "__REDACTED_WEBHOOK_ID__"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// --- 1. ID抽出ロジック ---\nconst extractId = (insightId) => {\n  // Insights APIのIDは \"12345/insights/...\" のような形式になることがあるため数値だけ抽出\n  const m = String(insightId || '').match(/^\\d+/);\n  return m ? m[0] : '';\n};\n\n// --- 2. データソースの整理 ---\n// Postデータ（n8nの右側入力：投稿の基本情報）\nconst post = $input.item.json;\n\n// Insightsデータ（n8nの左側入力：APIレスポンス）\n// 公式Docsによると構造は { data: [ { name: \"views\", values: [...] }, ... ] }\nconst insightsData = $json.data || [];\n\n// IDの照合\nconst insightIdRaw = $json.id ?? $json.data?.[0]?.id;\nconst postId = insightIdRaw ? extractId(insightIdRaw) : post.id;\n\n// --- 3. 指標取得用関数 (公式仕様準拠) ---\n// nameには \"views\", \"likes\", \"replies\", \"reposts\", \"quotes\" が入ります\nconst getMetricValue = (metricName) => {\n  // data配列から name が一致するオブジェクトを探す\n  const metricObj = insightsData.find(item => item.name === metricName);\n  \n  // 見つかったら values[0].value を返す。なければ 0\n  // ※期間指定(period)等がある場合も values 配列の先頭に入ることが一般的です\n  return metricObj?.values?.[0]?.value ?? 0;\n};\n\n// --- 4. 結果の出力 ---\nreturn {\n  json: {\n    id: postId,\n    \n    // テキスト・日付・リンクは元の投稿データから取得\n    caption: post.caption || post.text, \n    permalink: post.permalink,\n    timestamp: post.timestamp,\n    \n    // 数値データは全て Insights API のレスポンスから取得\n    // 公式ドキュメントの \"Available Metrics\" に基づきマッピング\n    views: getMetricValue('views'),\n    likes: getMetricValue('likes'),\n    replies: getMetricValue('replies'), // ここでコメント数が取れるはずです\n    reposts: getMetricValue('reposts'),\n    quotes: getMetricValue('quotes'),\n    \n    // デバッグ用: もしAPI設定漏れでデータが来ていないか確認するため\n    _raw_insights_names: insightsData.map(d => d.name).join(', ')\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        64
+      ],
+      "id": "b4e521c6-b94b-4ca2-b435-5eef7c9a2370",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// もし \"items\" が全投稿配列なら:\nconst posts = items.map(item => item.json);\n\n/**\n * 総合エンゲージメント率 (いいね + コメント) / 閲覧数 で降順ソート\n * これにより、単純な閲覧数稼ぎではなく「熱狂を生んだ投稿」が1位になります\n */\nposts.sort((a, b) => {\n  // 安全に値を取得 (repliesがない場合は0扱い)\n  const repliesA = a.replies || 0;\n  const repliesB = b.replies || 0;\n\n  // Aの総合エンゲージメント率計算\n  const rateA = a.views > 0 ? ((a.likes + repliesA) / a.views) : 0;\n  \n  // Bの総合エンゲージメント率計算\n  const rateB = b.views > 0 ? ((b.likes + repliesB) / b.views) : 0;\n  \n  // 降順 (大きい順)\n  return rateB - rateA;\n});\n\n// rankと計算したrateを付与して返す\n// ※すでにソート済みなので、ここでの i+1 が「総合エンゲージメントランク」になります\nreturn posts.map((p, i) => {\n  // 安全対策: repliesがnull/undefinedなら0にする\n  const replyCount = p.replies || 0; \n\n  // 1. いいね率の計算\n  const likeRateVal = p.views > 0 ? (p.likes / p.views) * 100 : 0;\n  \n  // 2. コメント率の計算\n  const commentRateVal = p.views > 0 ? (replyCount / p.views) * 100 : 0;\n\n  // 3. 総合エンゲージメント率: (いいね + コメント) / 閲覧数\n  const totalEngagementVal = p.views > 0 ? ((p.likes + replyCount) / p.views) * 100 : 0;\n\n  return {\n    json: {\n      ...p,\n      // 既存のいいね率\n      engagement_rate: parseFloat(likeRateVal.toFixed(2)) + '%', \n      \n      // コメント率\n      comment_rate: parseFloat(commentRateVal.toFixed(2)) + '%', \n      \n      // 総合エンゲージメント率 (これがソート基準です)\n      total_engagement_rate: parseFloat(totalEngagementVal.toFixed(2)) + '%',\n\n      rank: i + 1, \n    }\n  }\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        -80
+      ],
+      "id": "0d9a3e53-3e40-4a3f-bb8a-1b36b25a7188",
+      "name": "降順に変更"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "fieldsToMatchString": "id",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        944,
+        -80
+      ],
+      "id": "173e26b5-b742-43fc-a047-9c1801fc585c",
+      "name": "情報を統合",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const token  = '__REDACTED_ACCESS_TOKEN__';\nconst userId = '__REDACTED_ID__';\n\n// 期間をUNIX秒に\nconst since = Math.floor(new Date('2025-09-01T00:00:00Z').getTime() / 1000);\n\nlet nextUrl =\n  `https://graph.threads.net/v1.0/${userId}/threads` +\n  `?fields=id,text,timestamp,permalink` +\n  `&since=${since}` +\n  `&access_token=${token}`;\n\nconst all = [];\nwhile (nextUrl) {\n  const res = await this.helpers.httpRequest({ method: 'GET', url: nextUrl, json: true });\n  all.push(...(res.data || []));\n  nextUrl = res.paging?.next || null;\n}\nreturn all.map(p => ({ json: p }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        -96
+      ],
+      "id": "cb051ec1-5126-408c-a37d-2d08fb09a940",
+      "name": "2025年9月からの全投稿一覧"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "__REDACTED_DOCUMENT_ID__",
+          "mode": "list",
+          "cachedResultName": "Redacted Google Sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/__REDACTED__/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "__REDACTED_SHEET_REF__",
+          "mode": "list",
+          "cachedResultName": "Redacted Sheet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/__REDACTED__/edit#gid=__REDACTED__"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "内容": "={{ $json.text }}",
+            "いいね！": "={{ $json.likes }}",
+            "閲覧数": "={{ $json.views }}",
+            "順位": "={{ $json.rank }}",
+            "いいね率": "={{ $json.engagement_rate }}",
+            "コメント率": "={{ $json.comment_rate }}",
+            "総合エンゲージメント率": "={{ $json.total_engagement_rate }}"
+          },
+          "matchingColumns": [
+            "内容"
+          ],
+          "schema": [
+            {
+              "id": "順位",
+              "displayName": "順位",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "内容",
+              "displayName": "内容",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "いいね！",
+              "displayName": "いいね！",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "閲覧数",
+              "displayName": "閲覧数",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "いいね率",
+              "displayName": "いいね率",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "コメント率",
+              "displayName": "コメント率",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "総合エンゲージメント率",
+              "displayName": "総合エンゲージメント率",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1360,
+        -80
+      ],
+      "id": "d4148b5b-d8af-4e17-9dfe-1c4dcfa146a6",
+      "name": "順位を更新",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "__REDACTED__",
+          "name": "googleSheetsOAuth2Api (redacted)"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "2025年9月からの全投稿一覧",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "情報を統合",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "情報を統合": {
+      "main": [
+        [
+          {
+            "node": "降順に変更",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2025年9月からの全投稿一覧": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "情報を統合",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "降順に変更": {
+      "main": [
+        [
+          {
+            "node": "順位を更新",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "07395c49-6a6d-4eab-af2e-fa7718bf4c26",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "__REDACTED_INSTANCE_ID__"
+  },
+  "id": "ka2UV3STfRKwTRk0",
+  "tags": []
+}

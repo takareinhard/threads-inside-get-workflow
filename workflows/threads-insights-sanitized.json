@@ -155,7 +155,8 @@
                                                                        "いいね率":  "={{ $json.engagement_rate }}",
                                                                        "コメント率":  "={{ $json.comment_rate }}",
                                                                        "総合エンゲージメント率":  "={{ $json.total_engagement_rate }}",
-                                                                       "URL":  "={{ $json.permalink }}"
+                                                                       "URL":  "={{ $json.permalink }}",
+                                                                       "投稿日":  "={{ $json.timestamp }}"
                                                                    },
                                                          "matchingColumns":  [
                                                                                  "内容"
@@ -184,6 +185,16 @@
                                                                         {
                                                                             "id":  "URL",
                                                                             "displayName":  "URL",
+                                                                            "required":  false,
+                                                                            "defaultMatch":  false,
+                                                                            "display":  true,
+                                                                            "type":  "string",
+                                                                            "canBeUsedToMatch":  true,
+                                                                            "removed":  false
+                                                                        },
+                                                                        {
+                                                                            "id":  "投稿日",
+                                                                            "displayName":  "投稿日",
                                                                             "required":  false,
                                                                             "defaultMatch":  false,
                                                                             "display":  true,

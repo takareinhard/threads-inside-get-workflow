@@ -57,6 +57,7 @@ Google Sheets 側には、少なくとも次の列を用意しておく想定で
 - `順位`
 - `内容`
 - `URL`
+- `投稿日`
 - `いいね！`
 - `閲覧数`
 - `いいね率`
@@ -99,6 +100,7 @@ node scripts/sanitize-n8n-workflow.mjs <private-workflow.json> <public-output.js
 ## License
 
 Portfolio and educational use.
+
 
 
 
